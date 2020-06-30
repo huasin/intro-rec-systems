@@ -1,0 +1,73 @@
+---
+title: "Sistemas Recomendadores con recommenderlab"
+author: "Elías Alegría"
+date: "6/29/2020"
+output: html_notebook
+---
+
+```{r setup, include=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Tipos de sistemas recomendadores
+
+Los sistemas recomendadores se agrupan en 2 grandes grupos:
+
+1. Content based: toman en cuenta el contexto y características tanto de los usuarios como los ítems. Ej: modelos de clasificación para saber si un usuario elegirá o no una película en base a sus características, las características de la película y el comportamiento pasado del usuario.
+
+2. Collaborative Filtering: modelos basados exclusivamente en el comportamiento de los usuarios con respecto a los ítems. Ej: rating dado por parte de los usuarios a las películas. Se pueden utilizar los ratings para encontrar usuarios (o películas) similares para recomendar en base a la similitud.
+
+## Recommenderlab
+
+`Recommenderlab` es un paquete de R que entrega un framework de trabajo y evaluación de modelos recomendadores del tipo __Collaborative Filtering__. 
+
+En este documento se probarán los siguientes algoritmos incluidos en el paquete:
+
++ Random (RANDOM): Entregar recomendaciones aleatorias. Este modelo se realizará para establecer un punto de comparación para los otros modelos.
++ Popular (POPULAR): Entregar recomendaciones en base a los items más populares. A cada usuario se le recomiendan los ítems mejor rankeados que no haya rankeado previamente.
++ User based collaborative filtering (UBCF): Encontrar usuarios similares y recomendar en base a los vecinos más cercanos.
++ Item based collaborative filtering (IBCF): Encontrar similitud entre ítems y realizar recomendaciones en base a los items más similares a los preferidos por el usuario.
++ Singular Value Decomposition (SVD): Factorización de matrices para descomponer la matriz usuario-ítem en dos matrices que contienen _latent features_.
++ Aleternating last squares (ALS): Factorización de matrices, utiliza el algoritmo alterating last squares.
+
+
+## Lo básico de recommenderlab
+
+Cargamos los paquetes
+
+```{r, paquetes}
+library(recommenderlab)
+library(dplyr)
+```
+
+El objeto que utiliza `recommenderlab` para entrenar los modelos son matrices usuario-ítem que pueden ser de tipo `realRatingMatrix` o `binaryRatingMatrix`
+
+Esto se puede realizar a partir de una matriz ya creada o a partir de un data.frame con las con 3 columnas en orden: user | item | rating
+
+```{r}
+df <- read.csv("datasets/input/ratings.csv")
+df$timestamp <- NULL
+
+head(df)
+```
+
+Para crear el objeto de clase `realRatingMatrix` se utiliza la función `as`.
+
+```{r}
+ui <- df %>% as("realRatingMatrix")
+ui[1:10,1:10] %>% getRatingMatrix
+```
+Parsear realRatingMatrix
+
+```{r}
+ui %>% as("")
+```
+
+
+
+```{r}
+ui_bin <- ui %>% binarize(minRating = 4)
+ui_bin[1:10,1:10] %>% as("matrix")
+```
+
