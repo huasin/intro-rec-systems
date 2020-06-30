@@ -2,15 +2,21 @@
 title: "Sistemas Recomendadores con recommenderlab"
 author: "Elías Alegría"
 date: "6/29/2020"
-output: html_notebook
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    number_sections: true
+    theme: united
 ---
 
-```{r setup, include=FALSE, warning=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE)
 ```
 
 
-## Tipos de sistemas recomendadores
+# Tipos de sistemas recomendadores
 
 Los sistemas recomendadores se agrupan en 2 grandes grupos:
 
@@ -18,7 +24,7 @@ Los sistemas recomendadores se agrupan en 2 grandes grupos:
 
 2. Collaborative Filtering: modelos basados exclusivamente en el comportamiento de los usuarios con respecto a los ítems. Ej: rating dado por parte de los usuarios a las películas. Se pueden utilizar los ratings para encontrar usuarios (o películas) similares para recomendar en base a la similitud.
 
-## Recommenderlab
+# Recommenderlab
 
 `Recommenderlab` es un paquete de R que entrega un framework de trabajo y evaluación de modelos recomendadores del tipo __Collaborative Filtering__. 
 
@@ -32,21 +38,23 @@ En este documento se probarán los siguientes algoritmos incluidos en el paquete
 + Aleternating last squares (ALS): Factorización de matrices, utiliza el algoritmo alterating last squares.
 
 
-## Lo básico de recommenderlab
+## Comandos básicos
 
 Cargamos los paquetes
 
-```{r, paquetes}
+```{r, paquetes, message=FALSE}
 library(recommenderlab)
 library(dplyr)
 ```
+
+### Crear realRatingMatriz
 
 El objeto que utiliza `recommenderlab` para entrenar los modelos son matrices usuario-ítem que pueden ser de tipo `realRatingMatrix` o `binaryRatingMatrix`
 
 Esto se puede realizar a partir de una matriz ya creada o a partir de un data.frame con las con 3 columnas en orden: user | item | rating
 
 ```{r}
-df <- read.csv("datasets/input/ratings.csv")
+df <- read.csv("datasets/ratings.csv")
 df$timestamp <- NULL
 
 head(df)
@@ -58,16 +66,191 @@ Para crear el objeto de clase `realRatingMatrix` se utiliza la función `as`.
 ui <- df %>% as("realRatingMatrix")
 ui[1:10,1:10] %>% getRatingMatrix
 ```
-Parsear realRatingMatrix
+
+Una matriz realRatingMatrix se puede parsear tanto a matrix, data.frame o list.
 
 ```{r}
-ui %>% as("")
+ui %>% as("matrix") %>% .[1:10,1:10]
+ui %>% as("data.frame") %>% head
 ```
 
+### Binarizar matriz
 
+Se puede binarizar una matriz, con `binarize` y entregando un mínimo ratig para evaluar la transformación.
 
 ```{r}
 ui_bin <- ui %>% binarize(minRating = 4)
 ui_bin[1:10,1:10] %>% as("matrix")
+```
+
+
+### Operaciones matriciales
+
+Las matrices realRatingMatrix aceptan operaciones matriciales como rowSums, rowMeans, dim, indexar, etc.
+
+Por ejemplo,a continuación se muestra el rating promedio de la primera película:
+
+```{r}
+colMeans(ui[,1])
+```
+
+
+### Normalizar
+
+La función `normalize` permite normalizar con los métodos "center" y "Z-score" tanto filas como columnas (row = FALSE).
+
+```{r}
+ui %>% getRatings %>% hist(main = "Ratings")
+ui %>% normalize %>% getRatings %>% hist(main = "Rating normalizados por usuario")
+```
+
+## Ejemplo 0: recomendador de popularidad
+
+Para ejemplificar crearemos un recomendador de popularidad utilizando los primeros 600 usuarios y predeciremos el top 5 para los siguientes 2 usuarios. 
+
+```{r}
+rec_pop <- Recommender(ui, "POPULAR")
+pred_pop <- predict(rec_pop, ui[601:602], type = "topNList", n = 5)
+```
+
+Para entrenar un modelo, siempre se utiliza la función `Recommender`, se le entrega la data de entrenamiento y el tipo de modelo a utilizar. Para ver el listado de modelos y parámetros se pueden consultar con `recommenderRegistry$grep_entries()`.
+
+La función predict funciona como con cualquier otro modelo, pero además se le debe decir qué retornar ("topNList" o "ratings"). En caso de retornar topNList se requiere ingresar el número n.
+
+Para ver los resultados, se puede desplegar una lista como a continuación:
+
+```{r}
+pred_pop %>% as("list")
+```
+
+
+## Ejemplo 1: evaluación de algoritmos según rating
+
+En la evaluación por rating, se busca predecir el rating que los usuarios asignarán a los ítems, es por esto que se mide con métricas de error para regresiones como RMSE, o el MAE.
+
+### Limpiar base de datos
+
+La idea acá es no entregar mucho ruido al modelo, por lo que en primer lugar se verá cuál es el mínimo de películas rankiadas por usuario y el mínimo de ratings que tiene una película.
+
+```{r}
+# Mínimo de ratings por usuario
+rowCounts(ui) %>% as("matrix") %>% min
+# Mínimo de ratings por película
+colCounts(ui) %>% as("matrix") %>% min
+```
+
+El mínimo de ratings por usuarios es 20, mientras que el mínimo de ratings por película es 1, es decir hay al menos una película que sólo 1 usuario la rankeó. Para eliminar ruido en el modelo estableceremos el mínimo de ratings por película de 10.
+
+```{r}
+ui <- ui[,colCounts(ui)>= 20]
+```
+
+
+### Crear schema de evaluación
+
+Con la finalidad de realizar una evaluación de modelos, se realizará un split de 90% train y 10% test. 
+
+```{r}
+eval_scheme <- evaluationScheme(ui, method = "split", train = 0.9, given = 5)
+```
+
+Debido a que se predicen ratings de ítems en base a ratings sobre otros ítems que haya realizado el usuario, se debe asumir como "conocidos" solo una parte de los ratings. Esto está dado por el parámetro `given`. (En caso de que given sea negativo, representa "todos menos n")
+
+### Obtener data de train y test
+
+Luego, con `getData` se obtienen los siguientes datos:
+
++ train: data de entrenamiento
++ known: data de testeo conocida. Son los ratings que se asumen dados por el usuario que se utilizarán para predecir.
++ unknown: data de testeo que se asume desconocida. Sobre esta data finalmente se calcula el error.
+
+```{r}
+train <- eval_scheme %>% getData("train")
+known <- eval_scheme %>% getData("known")
+unknown <- eval_scheme %>% getData("unknown")
+```
+
+### Entrenar modelos
+
+Se entrenan diferentes recomendadores utilizando la data train
+
+```{r}
+r1 <- Recommender(train, "RANDOM")
+r2 <- Recommender(train, "UBCF")
+r3 <- Recommender(train, "IBCF")
+r4 <- Recommender(train, "SVD")
+r5 <- Recommender(train, "ALS")
+```
+
+### Predecir
+
+En este caso a la función `predict` es de tipo "ratings" ya que se está prediciendo el rating con el que el usuario valorará un ítem. La predicción se debe realizar utilizando la data *know*.
+
+```{r}
+p1 <- predict(r1, known, type = "ratings")
+p2 <- predict(r2, known, type = "ratings")
+p3 <- predict(r3, known, type = "ratings")
+p4 <- predict(r4, known, type = "ratings")
+p5 <- predict(r5, known, type = "ratings")
+```
+
+### Cálculo del error
+
+Para calcular las métricas de error (MAE, MRSE, MSE) sólo es necesario utilzar la función `calcPredictionAccuracy`. Para calcular el error de la prediccin se ocupa la dara *unknown*
+
+```{r}
+error <- rbind("random" = calcPredictionAccuracy(p1, unknown),
+               "ubcf" = calcPredictionAccuracy(p2, unknown),
+               "ibcf" = calcPredictionAccuracy(p3, unknown),
+               "svd" = calcPredictionAccuracy(p4, unknown),
+               "als" = calcPredictionAccuracy(p5, unknown))
+error
+```
+
+
+## Ejemplo 2: evaluación de algoritmos según topN
+
+La evaluación de predicción según topN predice el top de ítems que el usuario preferirá, pero la evaluación se realiza utilizando los ratings, por lo tanto es necesario establecer un criterio para los ratings para saber si el usuario lo prefiere o no.
+
+### Schema de evaluación
+
+En este ejemplo, dado que son ratings de películas de 1 a 5, se establecerá un buen rating mayor o igual a 4.
+
+```{r}
+eval_scheme <- evaluationScheme(ui, method = "split", train = 0.9, given = 5, goodRating = 4)
+```
+
+### Crear listado de algoritmos
+
+```{r}
+algos <- list("random" = list(name = "RANDOM", param = NULL),
+              "UBCF_10nn" = list(name = "UBCF", param = list(nn = 10)),
+              "UBCF_50nn" = list(name = "UBCF", param = list(nn = 50)),
+              "IBCF_Pearson" = list(name = "IBCF", param = list(method = "Pearson")),
+              "SVD" = list(name = "SVD"),
+              "ALS" = list(name = "ALS"),
+              "ALS_5" = list(name = "ALS", param = list(n_factors = 5)))
+```
+
+### Evaluar algoritmos
+
+Se evaluarán los algoritmos para n = 1,3,5,10,15,20. La función `eval` entrena los algoritmos, predice y entrega la evaluación para todos los algoritmos.
+
+```{r}
+eval <- evaluate(eval_scheme, algos, type = "topNList", n = c(1,3,5,10,15,20))
+```
+
+Luego, se puede graficar la curva ROC y un gráfico Precision / Recall
+
+```{r}
+plot(eval)
+```
+
+```{r}
+plot(eval,"prec/rec")
+```
+
+```{r}
+getConfusionMatrix(eval[["SVD"]])
 ```
 
